@@ -1,0 +1,1513 @@
+<?php
+/**
+ * Custom functions that act independently of the theme templates
+ *
+ * Eventually, some of the functionality here could be replaced by core features
+ *
+ * @package Sydney
+ */
+
+/**
+ * Build an upgrade/upsell URL with UTM parameters and allow filtering per placement.
+ *
+ * @param string $url  Base URL for the upgrade link (e.g., https://athemes.com/sydney-upgrade).
+ * @param array  $args Key/value query arguments to append (e.g., utm_* params). Optional.
+ * @param string $type Link placement/type identifier (e.g., 'customizer-upgrade-link'). Optional.
+ *
+ * @return string Final upgrade link URL.
+ */
+if ( ! function_exists( 'sydney_admin_upgrade_link' ) ) {
+    function sydney_admin_upgrade_link( $url, $args = array(), $type = 'upgrade-link' ) {
+        if ( ! empty( $args ) ) {
+            $url = add_query_arg( $args, $url );
+        }
+
+        /**
+         * Filter: Modify generated upgrade link before output.
+         *
+         * @param string $url  The generated upgrade link URL.
+         * @param string $type The link placement/type identifier.
+         * @param array  $args The arguments used to build the link.
+         */
+        return apply_filters( 'sydney_upgrade_link', $url, $type, $args );
+    }
+}
+
+/**
+ * Adds custom classes to the array of body classes.
+ *
+ * @param array $classes Classes for the body element.
+ * @return array
+ */
+function sydney_body_classes( $classes ) {
+	$front_header_type = get_theme_mod( 'front_header_type', apply_filters( 'sydney_front_header_type_default', 'nothing' ) );
+	$site_header_type  = get_theme_mod( 'site_header_type' );
+
+	// Adds a class of group-blog to blogs with more than 1 published author.
+	if ( is_multi_author() ) {
+		$classes[] = 'group-blog';
+	}
+
+	if ( ( 'nothing' === $front_header_type && is_front_page() ) || ( 'nothing' === $site_header_type && ! is_front_page() ) || is_page_template( 'page-templates/page_no-header.php' ) || is_page_template( 'page-templates/page_no-header-wide.php' ) ) {
+		$classes[] = 'no-hero';
+	} else {
+		$classes[] = 'has-hero';
+	}
+
+	$header_layout_desktop = get_theme_mod( 'header_layout_desktop', 'header_layout_2' );
+	$classes[]             = 'has-' . esc_attr( $header_layout_desktop );
+
+	$menu_style = get_theme_mod( 'menu_style', 'inline' );
+	$classes[] = 'menu-' . esc_attr( $menu_style );
+
+	if ( get_theme_mod( 'swc_show_sidebar_cart', 0 ) ) {
+		$classes[] = 'has-sidebar-cart';
+	}
+
+	$sidebar_archives       = get_theme_mod( 'sidebar_archives', 1 );
+	$sidebar_single_post    = get_theme_mod( 'sidebar_single_post', 1 );
+
+	$is_woo_page            = class_exists( 'Woocommerce' ) && is_woocommerce();
+	$is_archive_or_post     = ! is_singular() || is_singular( 'post' );
+
+	if ( ( !is_singular() && !$sidebar_archives ) || ( is_singular( 'post' ) && !$sidebar_single_post ) ) {
+		$classes[] = 'no-sidebar';
+	} elseif ( $is_archive_or_post && ! $is_woo_page && '' === sydney_get_active_sidebar_id() ) {
+		//Woo pages are left out: their layout classes come from the Woo branch of
+		//sydney_page_content_classes().
+		//Pages and other singulars get no-sidebar from the content area class, not
+		//the body, to keep .no-sidebar .page-wrap overflow off them.
+		$classes[] = 'no-sidebar';
+	}
+
+	//Transparent header
+	global $post;
+	if ( isset( $post ) ) {
+		$transparent_menu = get_post_meta( $post->ID, '_sydney_transparent_menu', true );
+		if ( $transparent_menu ) {
+			$classes[] = 'transparent-header';
+		}
+	}
+
+	//Customizer transparent header
+	$transparent_header = sydney_get_display_conditions( 'transparent_header', false );
+	if ( $transparent_header ) {
+		$classes[] = 'transparent-header';
+	}
+
+	//Transparent header on mobile
+	if ( in_array( 'transparent-header', $classes, true ) && ! get_theme_mod( 'transparent_header_mobile', 1 ) ) {
+		$classes[] = 'no-transparent-header-mobile';
+	}
+
+	//Offcanvas
+	$classes[] = 'offcanvas-effect-' . esc_attr( get_theme_mod( 'offcanvas_opening_effect', 'slide' ) );
+	$classes[] = 'offcanvas-direction-' . esc_attr( get_theme_mod( 'offcanvas_direction', 'left' ) );
+
+	//Check if current page has blocks
+	if ( isset( $post ) && function_exists( 'has_blocks' ) && has_blocks() ) {
+		$classes[] = 'syd-has-blocks';
+	}
+	
+	return $classes;
+}
+add_filter( 'body_class', 'sydney_body_classes' );
+
+/**
+ * Support for Yoast SEO breadcrumbs
+ */
+function sydney_yoast_seo_breadcrumbs() {
+	/**
+	 * Filter: whether the single-post Yoast breadcrumb trail is emitted.
+	 *
+	 * Pro defines this function but has never called it, so its callback
+	 * returns false and the shared call site stays a no-op there.
+	 *
+	 * @param bool $enabled Default true, free's behaviour.
+	 */
+	if ( ! apply_filters( 'sydney_yoast_seo_breadcrumbs_enabled', true ) ) {
+		return;
+	}
+
+	if ( function_exists('yoast_breadcrumb') ) {
+		yoast_breadcrumb('
+		<p class="sydney-breadcrumbs">','</p>
+		');
+	}
+}
+
+/**
+ * Additional classes for main content area on pages
+ */
+function sydney_page_content_classes() {
+	global $post;
+
+	if ( class_exists( 'Woocommerce' ) && is_woocommerce() ) {
+		$archive_check          = sydney_wc_archive_check();
+		$shop_single_sidebar    = get_theme_mod( 'swc_sidebar_products', 0 );  
+		$archive_sidebar        = get_theme_mod( 'shop_archive_sidebar', 'sidebar-left' );
+	
+		if ( is_product() ) {
+			if ( $shop_single_sidebar ) {
+				$cols = 'col-md-12';
+			} else {
+				$cols = 'col-md-9';
+			}
+		} elseif ( $archive_check ) {
+			$shop_categories_layout = get_theme_mod( 'shop_categories_layout', 'layout1' );
+		
+			if ( 'no-sidebar' === $archive_sidebar ) {
+				remove_action( 'woocommerce_sidebar', 'woocommerce_get_sidebar', 10 );
+				$columns = 'col-md-12';
+			} else {
+				$columns = 'col-md-9';
+			}
+		
+			if ( 'sidebar-top' === $archive_sidebar ) {
+				$shop_archive_sidebar_top_columns = get_theme_mod( 'shop_archive_sidebar_top_columns', '4' );
+		
+				$archive_sidebar .= ' sidebar-top-columns-' . $shop_archive_sidebar_top_columns;
+			}
+		
+			$archive_sidebar .= ' product-category-item-' . $shop_categories_layout;
+			
+			$layout = get_theme_mod( 'shop_archive_layout', 'product-grid' );   
+		
+			$cols = $archive_sidebar . ' ' . $layout . ' ' . $columns;
+		}
+
+		
+		return $cols;
+	}   
+
+	$sidebar_archives = get_theme_mod( 'sidebar_archives', 1 );
+
+	if ( !is_singular() && !$sidebar_archives ) {
+		return 'col-md-12';
+	} 
+	
+	$disable_sidebar_pages  = get_theme_mod( 'fullwidth_pages', 0 );
+
+	if ( is_page() && $disable_sidebar_pages ) {
+		return 'no-sidebar';
+	} elseif ( is_singular( 'post' ) ) {
+		$disable_sidebar        = get_post_meta( $post->ID, '_sydney_page_disable_sidebar', true );
+		$sidebar_single_post    = get_theme_mod( 'sidebar_single_post', 1 );
+
+		if ( $disable_sidebar || !$sidebar_single_post ) {
+			return 'no-sidebar';
+		}
+	} elseif ( is_singular() ) {
+
+		$post_type = get_post_type();
+		$enable = get_theme_mod( 'sidebar_single_' . $post_type, 1 );
+
+		if ( !$enable ) {
+			return 'no-sidebar';
+		}
+	}   
+
+	//An empty sidebar renders nothing, so take the same classes the toggles give
+	if ( '' === sydney_get_active_sidebar_id() ) {
+		return is_singular() ? 'no-sidebar' : 'col-md-12';
+	}
+
+	return 'col-md-9'; //default
+}
+add_filter( 'sydney_content_area_class', 'sydney_page_content_classes' );
+
+/**
+ * The sidebar id sidebar.php would print for this request, before the
+ * per-view sidebar toggles are applied.
+ *
+ * Callable before output, so the layout classes can follow what sidebar.php
+ * will do. Empty when the resolved sidebar has no widgets, in which case
+ * sidebar.php prints nothing.
+ *
+ * @return string Sidebar id, or '' when that sidebar has no widgets.
+ */
+function sydney_get_active_sidebar_id() {
+	$sidebar_id = apply_filters( 'sydney_sidebar_id', 'sidebar-1' );
+
+	if ( ! is_active_sidebar( $sidebar_id ) ) {
+		return '';
+	}
+
+	return $sidebar_id;
+}
+
+/**
+ * Sidebar output function
+ * 
+ * hooked into sydney_get_sidebar
+ */
+function sydney_get_sidebar() {
+
+	if ( false === apply_filters( 'sydney_show_sidebar', true ) ) {
+		return;
+	}
+
+	if ( apply_filters( 'sydney_disable_cart_checkout_sidebar', true ) && class_exists( 'WooCommerce' ) && ( is_checkout() || is_cart() ) ) {
+		return; //we don't want a sidebar on the checkout and cart page
+	}
+
+	global $post;
+
+	$sidebar_archives       = get_theme_mod( 'sidebar_archives', 1 );
+
+	$disable_sidebar_pages  = get_theme_mod( 'fullwidth_pages', 0 );
+
+	if ( is_page() && $disable_sidebar_pages ) {
+		return;
+	}
+
+	if ( !is_singular() && !$sidebar_archives ) {
+		return;
+	} elseif ( is_singular() && isset( $post ) ) {
+		$disable_sidebar            = get_post_meta( $post->ID, '_sydney_page_disable_sidebar', true );
+		
+		if ( is_singular( 'post' ) ) {
+			$sidebar_customizer = get_theme_mod( 'sidebar_single_post', 1 );
+		} else {
+			$sidebar_customizer = true;
+		}
+
+		if ( $disable_sidebar || !$sidebar_customizer ) {
+			return;
+		}
+	}
+
+	get_sidebar();
+}
+add_action( 'sydney_get_sidebar', 'sydney_get_sidebar' );
+
+/**
+ * Custom header button
+ */
+function sydney_add_header_menu_button( $items, $args ) {
+
+    if ( get_option( 'sydney-update-header' ) ) {
+        return $items;
+    }   
+
+	$type = get_theme_mod( 'header_button_html', 'nothing' );
+
+    if ( $args -> theme_location === 'primary' ) {
+		if ( 'button' === $type ) {
+			$link   = get_theme_mod( 'header_custom_item_btn_link', 'https://example.org/' );
+			$text   = get_theme_mod( 'header_custom_item_btn_text', __( 'Get in touch', 'sydney' ) );
+			$target = get_theme_mod( 'header_custom_item_btn_target', 1 );
+			if ( $target ) {
+				$target = '_blank';
+			} else {
+				$target = '_self';
+			}
+
+			$items .= '<li class="header-custom-item"><a class="header-button roll-button" target="' . $target . '" href="' . esc_url( $link ) . '" title="' . esc_attr( $text ) . '">' . esc_html( $text ) . '</a></li>';
+		} elseif ( 'html' === $type ) {
+			$content = get_theme_mod( 'header_custom_item_html' );
+
+			$items .= '<li class="header-custom-item">' . wp_kses_post( $content ) . '</li>';
+		}
+    }
+    return $items;
+}
+add_filter( 'wp_nav_menu_items', 'sydney_add_header_menu_button', 11, 2 );
+
+/**
+ * Menu container
+ */
+if ( !function_exists( 'sydney_menu_container' ) ) {
+	function sydney_menu_container() {
+		$type = get_theme_mod( 'menu_container', 'container' );
+
+		return $type;
+	}
+}
+
+/**
+ * Get image alts
+ */
+if ( ! function_exists( 'sydney_image_alt' ) ) {
+	function sydney_image_alt( $image ) {
+
+		$id     = attachment_url_to_postid( $image );
+		$alt    = get_post_meta( $id, '_wp_attachment_image_alt', true) ;
+
+		if ( $alt ) {
+			return $alt;
+		}
+	}
+}
+
+/**
+ * Check AMP endpoint
+ */
+if ( ! function_exists( 'sydney_is_amp' ) ) {
+	function sydney_is_amp() {
+		return function_exists( 'amp_is_request' ) && amp_is_request();
+	}
+}
+
+/**
+ * Update fontawesome ajax callback
+ */
+function sydney_update_fontawesome_callback() {
+	check_ajax_referer( 'sydney-fa-updt-nonce', 'nonce' );
+
+	update_option( 'sydney-fontawesome-v5', true );
+
+	wp_send_json( array(
+		'success' => true,
+	) );
+}
+add_action( 'wp_ajax_sydney_update_fontawesome_callback', 'sydney_update_fontawesome_callback' );
+
+/**
+ * Check which version of fontawesome is active 
+ * and return the needed class prefix
+ */
+function sydney_get_fontawesome_prefix( $v5_prefix = '' ) {
+	$fa_prefix = 'fa '; // v4
+	if( get_option( 'sydney-fontawesome-v5' ) ) {
+		$fa_prefix = $v5_prefix;
+	}
+
+	return $fa_prefix;
+}
+
+/*
+* Append gotop button html on footer
+* Ensure compatibility with plugins that handle with footer like header/footer builders
+*/
+function sydney_append_gotop_html() {
+	
+	$enable = get_theme_mod( 'enable_scrolltop', 1 );
+
+	if ( !$enable ) {
+		return;
+	}
+
+	$type       = get_theme_mod( 'scrolltop_type', 'icon' );            
+	$text       = get_theme_mod( 'scrolltop_text', esc_html__( 'Back to top', 'sydney' ) ); 
+	$icon       = get_theme_mod( 'scrolltop_icon', 'icon2' );
+	$visibility = get_theme_mod( 'scrolltop_visibility', 'all' );
+	$position   = get_theme_mod( 'scrolltop_position', 'right' );
+	$label      = trim( $text );
+
+	if ( '' === $label ) {
+		$label = __( 'Back to top', 'sydney' );
+	}
+
+	echo '<a href="#toptarget" aria-label="' . esc_attr( $label ) . '" on="tap:toptarget.scrollTo(duration=200)" class="go-top visibility-' . esc_attr( $visibility ) . ' position-' . esc_attr( $position ) . '">';
+	if ( 'text' === $type ) {
+		echo '<span>' . esc_html( $text ) . '</span>';
+	}
+	echo    '<i class="sydney-svg-icon" aria-hidden="true">' . sydney_get_svg_icon( 'icon-btt-' . $icon, false ) . '</i>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	echo '</a>';
+}
+add_action('wp_footer', 'sydney_append_gotop_html', 1);
+
+/**
+ * Supported social networks: the URL substrings sydney_get_social_network()
+ * recognizes. A profile URL matching none of these renders no icon.
+ */
+function sydney_get_social_networks() {
+	return array( 'bsky', 'bluesky', 'threads', 'mastodon', 'feed', 'maps', 'facebook', 'twitter', 'x.com', 'instagram', 'github', 'linkedin', 'youtube', 'xing', 'flickr', 'dribbble', 'vk', 'weibo', 'vimeo', 'mix', 'behance', 'spotify', 'soundcloud', 'twitch', 'bandcamp', 'etsy', 'pinterest', 'amazon', 'tiktok', 'telegram', 'whatsapp', 'wa.me', 't.me', 'discord', 'goodreads' );
+}
+
+/**
+ * Get social network
+ */
+function sydney_get_social_network( $social ) {
+
+	$networks = sydney_get_social_networks();
+
+	foreach ( $networks as $network ) {
+		$found = strpos( $social, $network );
+
+		if ( $found !== false ) {
+			return $network;
+		}
+	}
+}
+
+/**
+ * Social profile list
+ */
+if ( ! function_exists( 'sydney_social_profile' ) ) {
+	function sydney_social_profile( $location ) {
+
+		$social_links = get_theme_mod( $location );
+
+		if ( !$social_links ) {
+			return;
+		}
+
+		$social_links = explode( ',', $social_links );
+
+		$items = '<div class="social-profile">';
+		foreach ( $social_links as $social ) {
+			$network = sydney_get_social_network( $social );
+			if ( $network ) {
+				// translators: %s is the social network name
+				$aria_label = sprintf( esc_html__( '%s link, opens in a new tab', 'sydney' ), esc_html( $network ) );
+				$items .= '<a target="_blank" href="' . esc_url( $social ) . '" aria-label="' . esc_attr( $aria_label )  . '"><i class="sydney-svg-icon" role="presentation">' . sydney_get_svg_icon( 'icon-' . esc_html( $network ), false ) . '</i></a>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			}
+		}
+		$items .= '</div>';
+
+		echo $items; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+	}
+}
+
+/**
+ * Default footer credits string. Single source for the customizer option,
+ * the classic footer output, the HF copyright component, and the abilities
+ * definition map (pinned there by AbilitiesDefinitionsCanonTest).
+ *
+ * @return string
+ */
+/**
+ * Validate an HTML tag name against an allowlist of safe tags.
+ *
+ * Promoted to the shared file by Sydney#569: inc/slider.php reads a
+ * customizer-chosen heading tag, and free strips inc/pro/, so a pro-only
+ * declaration would fatal free on every page with a slider. The helper has no
+ * Pro semantics, only an allowlist.
+ *
+ * @param string $tag     Tag name to validate.
+ * @param string $default Tag to fall back to when the value is not allowed.
+ * @return string The validated tag name.
+ */
+function sydney_validate_html_tag( $tag, $default = 'div' ) {
+	$allowed_tags = array( 'article', 'aside', 'div', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'main', 'nav', 'p', 'section', 'span' );
+
+	$tag = strtolower( (string) $tag );
+
+	return in_array( $tag, $allowed_tags, true ) ? $tag : $default;
+}
+
+/**
+ * Whether the aThemes White Label plugin is switched on for this site.
+ *
+ * The plugin's own cache is filled only in the admin (its constructor returns
+ * early on ! is_admin()), so athemes_wl_get_data() is empty on the front end.
+ * Read the option it stores instead. activate_white_label is the key
+ * aThemes_White_Label::is_awl_active() reads.
+ *
+ * @return bool
+ */
+if ( ! function_exists( 'sydney_is_white_labelled' ) ) {
+	function sydney_is_white_labelled() {
+		if ( ! function_exists( 'athemes_wl_get_data' ) ) {
+			return false;
+		}
+
+		$data = get_option( 'athemes_white_label_settings' );
+
+		return is_array( $data ) && ! empty( $data['activate_white_label'] );
+	}
+}
+
+function sydney_get_theme_author_link() {
+
+	$link = '<a rel="nofollow" href="https://athemes.com/theme/sydney/">' . esc_html__( 'Sydney', 'sydney' ) . '</a>';
+
+	/**
+	 * Filter: the theme author link substituted for {theme_author}.
+	 *
+	 * Pro returns its own product name. White labelling below overrides
+	 * whatever this produces.
+	 *
+	 * @param string $link An anchor element.
+	 */
+	$link = apply_filters( 'sydney_theme_author_link', $link );
+
+	if ( ! sydney_is_white_labelled() ) {
+		return $link;
+	}
+
+	$data = get_option( 'athemes_white_label_settings' );
+
+	// The plugin writes the name under awl_theme_name and awl_agency_name; accept either.
+	$name = '';
+	if ( ! empty( $data['awl_theme_name'] ) ) {
+		$name = $data['awl_theme_name'];
+	} elseif ( ! empty( $data['awl_agency_name'] ) ) {
+		$name = $data['awl_agency_name'];
+	}
+
+	// White labelled but unconfigured: emit no credit rather than the theme's
+	// own link, which is what Pro renders on these sites today.
+	if ( '' === $name || empty( $data['awl_agency_url'] ) ) {
+		return '';
+	}
+
+	return '<a rel="nofollow" href="' . esc_url( $data['awl_agency_url'] ) . '">' . esc_html( $name ) . '</a>';
+}
+
+/**
+ * Default footer credits string
+ */
+function sydney_get_footer_credits_default() {
+	/* translators: %1$1s, %2$2s theme copyright tags*/
+	return sprintf( esc_html__( '%1$1s. Proudly powered by %2$2s', 'sydney' ), '{copyright} {year} {site_title}', '{theme_author}' );
+}
+
+/**
+ * Footer credits
+ */
+function sydney_footer_credits() {
+
+	$credits    = get_theme_mod( 'footer_credits', sydney_get_footer_credits_default() );
+
+	$tags       = array( '{theme_author}', '{site_title}', '{copyright}', '{year}' );
+	$replace    = array( sydney_get_theme_author_link(), get_bloginfo( 'name' ), '&copy;', gmdate('Y') );
+
+	$credits    = str_replace( $tags, $replace, $credits );
+
+	$credits    = '<div class="sydney-credits">' . $credits . '</div>';
+
+	return $credits;
+}
+
+/**
+ * Masonry data for HTML intialization
+ */
+function sydney_masonry_data() {
+
+	$layout = get_theme_mod( 'blog_layout', 'layout2' );
+
+	if ( 'layout5' !== $layout ) {
+		return; //Output data only for the masonry layout (layout5)
+	}
+
+	$data = 'data-masonry=\'{ "itemSelector": "article", "horizontalOrder": true }\'';
+
+	echo apply_filters( 'sydney_masonry_data', wp_kses_post( $data ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+}
+
+/**
+ * Sidebar position
+ */
+function sydney_sidebar_position() {
+
+	$class = '';
+
+	if ( !is_singular() ) {
+		$sidebar_archives_position  = get_theme_mod( 'sidebar_archives_position', 'sidebar-right' );
+		$class = $sidebar_archives_position;
+	} elseif ( is_singular() ) {
+		global $post;
+
+		if ( !isset( $post ) ) {
+			return;
+		}
+
+		$post_type          = get_post_type();
+		$sidebar_position   = get_theme_mod( 'sidebar_single_' . $post_type . '_position', 'sidebar-right' );
+
+		$class = $sidebar_position;
+	}
+
+	return esc_attr( $class );
+}
+
+/**
+ * Post author bio
+ */
+function sydney_post_author_bio() {
+
+	$single_post_show_author_box = get_theme_mod( 'single_post_show_author_box', 0 );
+
+	if ( !$single_post_show_author_box ) {
+		return;
+	}
+
+	?>
+	<div class="single-post-author">
+		<div class="author-avatar vcard">
+			<?php echo get_avatar( get_the_author_meta( 'ID' ), 60 ); ?>
+		</div>
+
+		<div class="author-content">
+			<h3 class="author-name">
+				<?php
+					printf(
+						/* translators: %s: Author name */
+						esc_html__( 'By %s', 'sydney' ),
+						esc_html( get_the_author() )
+					);
+				?>
+			</h3>		
+			<?php echo wp_kses_post( wpautop( get_the_author_meta( 'description' ) ) ); ?>
+			<a class="author-link" href="<?php echo esc_url( get_author_posts_url( get_the_author_meta( 'ID' ) ) ); ?>" rel="author">
+				<?php
+					printf(
+						/* translators: %s: Author name */
+						__( 'See all posts by %s', 'sydney' ),// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+						esc_html( get_the_author() )
+					);
+				?>
+			</a>
+		</div>
+	</div>
+	<?php
+}
+add_action( 'sydney_after_single_entry', 'sydney_post_author_bio', 21 );
+
+/**
+ * Related posts
+ */
+function sydney_related_posts() {
+
+	$single_post_show_related_posts = get_theme_mod( 'single_post_show_related_posts', 0 );
+
+	if ( !$single_post_show_related_posts ) {
+		return;
+	}
+
+	$related_title  = get_theme_mod( 'related_posts_title', esc_html__( 'You might also like:', 'sydney' ) );
+    $post_id        = get_the_ID();
+    $cat_ids        = array();
+    $categories     = get_the_category( $post_id );
+
+    if( !empty($categories) && !is_wp_error( $categories ) ):
+        foreach ( $categories as $category ):
+            array_push( $cat_ids, $category->term_id );
+        endforeach;
+    endif;
+
+    $query_args = array( 
+        'category__in'      => $cat_ids,
+        'post__not_in'      => array( $post_id ),
+        'posts_per_page'    => '3',
+    );
+
+    $related_cats_post = new WP_Query( $query_args );
+
+    if( $related_cats_post->have_posts()) :
+		echo '<div class="sydney-related-posts">';
+
+			if ( '' !== $related_title ) {
+				echo '<h3>' . esc_html( $related_title ) . '</h3>';
+			}
+			echo '<div class="row">';
+			while( $related_cats_post->have_posts() ): $related_cats_post->the_post(); ?>
+				<div class="col-md-4">
+					<div class="related-post">
+						<div class="entry-thumb">
+							<a href="<?php the_permalink(); ?>" title="<?php the_title_attribute(); ?>"><?php the_post_thumbnail( 'sydney-medium-thumb' ); ?></a>
+						</div>	
+						<div class="entry-meta">
+							<?php sydney_posted_on(); ?>
+						</div>
+						<?php the_title( '<h4 class="entry-title"><a href="' . esc_url( get_permalink() ) . '" rel="bookmark">', '</a></h4>' ); ?>
+					</div>
+				</div>
+			<?php endwhile;
+			echo '</div>';
+		echo '</div>';
+
+        wp_reset_postdata();
+    endif;
+}
+add_action( 'sydney_after_single_entry', 'sydney_related_posts', 31 );
+
+/**
+ * Default header components
+ */
+function sydney_get_default_header_components() {
+	$components = array(
+		'l1'        => array( 'search', 'woocommerce_icons' ),
+		'l3left'    => array( 'search' ),
+		'l3right'   => array( 'woocommerce_icons' ),
+		'l4top'     => array( 'search' ),
+		'l4bottom'  => array( 'woocommerce_icons' ),
+		'l5topleft' => array(),
+		'l5topright'=> array( 'woocommerce_icons' ),
+		'l5bottom'  => array( 'search' ),
+		'mobile'    => array( 'search' ),
+		'offcanvas' => array(),
+	);
+
+	return apply_filters( 'sydney_default_header_components', $components );
+}
+
+/**
+ * Header layouts
+ */
+function sydney_header_layouts() {
+	$choices = array(           
+		'header_layout_1' => array(
+			'label' => esc_html__( 'Layout 1', 'sydney' ),
+			'url'   => '%s/images/customizer/hl1.svg',
+		),
+		'header_layout_2' => array(
+			'label' => esc_html__( 'Layout 2', 'sydney' ),
+			'url'   => '%s/images/customizer/hl2.svg',
+		),      
+		'header_layout_3' => array(
+			'label' => esc_html__( 'Layout 3', 'sydney' ),
+			'url'   => '%s/images/customizer/hl3.svg',
+		),              
+		'header_layout_4' => array(
+			'label' => esc_html__( 'Layout 4', 'sydney' ),
+			'url'   => '%s/images/customizer/hl4.svg',
+		),
+		'header_layout_5' => array(
+			'label' => esc_html__( 'Layout 5', 'sydney' ),
+			'url'   => '%s/images/customizer/hl5.svg',
+		),
+	);
+
+	return apply_filters( 'sydney_header_layout_choices', $choices );
+}
+
+/**
+ * Mobile header layouts
+ */
+function sydney_mobile_header_layouts() {
+	$choices = array(           
+		'header_mobile_layout_1' => array(
+			'label' => esc_html__( 'Layout 1', 'sydney' ),
+			'url'   => '%s/images/customizer/mhl1.svg',
+		),
+		'header_mobile_layout_2' => array(
+			'label' => esc_html__( 'Layout 2', 'sydney' ),
+			'url'   => '%s/images/customizer/mhl2.svg',
+		),      
+		'header_mobile_layout_3' => array(
+			'label' => esc_html__( 'Layout 3', 'sydney' ),
+			'url'   => '%s/images/customizer/mhl3.svg',
+		),
+	);
+
+	return apply_filters( 'sydney_mobile_header_layout_choices', $choices );
+}
+
+/**
+ * Header elements
+ */
+if ( ! function_exists( 'sydney_header_elements' ) ) {
+	function sydney_header_elements() {
+
+		$elements = array(
+			'search'            => esc_html__( 'Search', 'sydney' ),
+			'woocommerce_icons' => esc_html__( 'Cart &amp; account icons', 'sydney' ),
+			'button'            => esc_html__( 'Button', 'sydney' ),
+			'contact_info'      => esc_html__( 'Contact info', 'sydney' ),
+			'social'            => esc_html__( 'Social', 'sydney' ),
+		);
+
+		return apply_filters( 'sydney_header_elements', $elements );
+	}
+}
+
+/**
+ * Add submenu icons
+ */
+function sydney_add_submenu_icons( $item_output, $item, $depth, $args ) {
+
+	if ( false === get_option( 'sydney-update-header' ) ) {
+		return $item_output;
+	}
+	
+	if ( empty( $args->theme_location ) || ( 'mobile' !== $args->theme_location && 'primary' !== $args->theme_location && 'ele-nav' !== $args->theme_location ) ) {
+		return $item_output;
+	}
+
+	if ( ! empty( $item->classes ) && in_array( 'menu-item-has-children', $item->classes, true ) ) {
+		$item_output = preg_replace('/<a /', '<a aria-haspopup="true" aria-expanded="false" ', $item_output, 1);
+
+		/**
+		 * Filter: the submenu dropdown symbol.
+		 *
+		 * Pro's Template Builder navigation widget adds and removes this around
+		 * its own wp_nav_menu() call, so each instance can choose its icon, and
+		 * Pro's mega menu walker applies it on its own path. Free registers no
+		 * listener, so the default is returned unchanged.
+		 *
+		 * @param string $symbol Inline SVG for the dropdown icon.
+		 */
+		$symbol = apply_filters( 'sydney_dropdown_symbol', sydney_get_svg_icon( 'icon-down', false ) );
+
+		return $item_output . '<span tabindex=0 class="dropdown-symbol"><i class="sydney-svg-icon">' . $symbol . '</i></span>';
+	}
+
+    return $item_output;
+}
+add_filter( 'walker_nav_menu_start_el', 'sydney_add_submenu_icons', 10, 4 );
+
+/**
+ * Parse a Google Fonts variant string into a (weight, italic) tuple.
+ *
+ * Recognised forms:
+ *   'regular'    -> ('400', false)
+ *   'italic'     -> ('400', true)
+ *   '400'        -> ('400', false)
+ *   '700italic'  -> ('700', true)
+ *
+ * Anything else (e.g. 'banana', '') returns null.
+ *
+ * @param mixed $variant Raw variant from the typography theme_mod.
+ * @return array{weight:string,italic:bool}|null
+ */
+function sydney_parse_font_variant( $variant ) {
+	if ( ! is_scalar( $variant ) ) {
+		return null;
+	}
+	$variant = (string) $variant;
+	if ( '' === $variant ) {
+		return null;
+	}
+
+	if ( 'regular' === $variant ) {
+		return array( 'weight' => '400', 'italic' => false );
+	}
+	if ( 'italic' === $variant ) {
+		return array( 'weight' => '400', 'italic' => true );
+	}
+
+	$italic = false;
+	$weight = $variant;
+	if ( substr( $variant, -6 ) === 'italic' ) {
+		$italic = true;
+		$weight = substr( $variant, 0, -6 );
+	}
+
+	if ( '' === $weight || ! ctype_digit( $weight ) ) {
+		return null;
+	}
+
+	return array( 'weight' => $weight, 'italic' => $italic );
+}
+
+/**
+ * Normalise a typography theme_mod into the sorted, deduplicated list of
+ * Google Fonts variant tuples to LOAD.
+ *
+ * Combines `regularweight` (the primary, applied via PHP CSS) with the optional
+ * `extraweights` array (additional variants loaded but not applied).
+ *
+ * Each entry is an associative array: `[ 'weight' => '400', 'italic' => false ]`.
+ * Sort order is roman first (italic = false), then italic; each group sorted
+ * numerically by weight ascending. Empty input falls back to `[('400', false)]`.
+ *
+ * @param array $font Decoded typography theme_mod.
+ * @return array<int,array{weight:string,italic:bool}>
+ */
+function sydney_typography_loaded_weights( $font ) {
+	$tuples = array();
+
+	$primary = isset( $font['regularweight'] ) ? $font['regularweight'] : '400';
+	$parsed  = sydney_parse_font_variant( $primary );
+	if ( null !== $parsed ) {
+		$tuples[] = $parsed;
+	}
+
+	$extras = isset( $font['extraweights'] ) ? $font['extraweights'] : array();
+	if ( is_array( $extras ) ) {
+		foreach ( $extras as $extra ) {
+			$parsed = sydney_parse_font_variant( $extra );
+			if ( null === $parsed ) {
+				continue;
+			}
+			$tuples[] = $parsed;
+		}
+	}
+
+	// Dedupe by (weight, italic) tuple.
+	$seen   = array();
+	$unique = array();
+	foreach ( $tuples as $tuple ) {
+		$key = $tuple['weight'] . '|' . ( $tuple['italic'] ? '1' : '0' );
+		if ( isset( $seen[ $key ] ) ) {
+			continue;
+		}
+		$seen[ $key ] = true;
+		$unique[]     = $tuple;
+	}
+
+	if ( empty( $unique ) ) {
+		return array( array( 'weight' => '400', 'italic' => false ) );
+	}
+
+	// Roman first, then italic; within each group sort numerically by weight.
+	usort(
+		$unique,
+		static function ( $a, $b ) {
+			if ( $a['italic'] !== $b['italic'] ) {
+				return $a['italic'] ? 1 : -1;
+			}
+			return ( (int) $a['weight'] ) <=> ( (int) $b['weight'] );
+		}
+	);
+
+	return $unique;
+}
+
+/**
+ * Google Fonts URL
+ */
+if ( ! function_exists( 'sydney_google_fonts_url' ) ) {
+	function sydney_google_fonts_url() {
+		$defaults = wp_json_encode(
+			array(
+				'font'          => 'System default',
+				'regularweight' => '400',
+				'category'      => 'sans-serif',
+			)
+		);
+
+		$body_font     = json_decode( get_theme_mod( 'sydney_body_font',     $defaults ), true );
+		$headings_font = json_decode( get_theme_mod( 'sydney_headings_font', $defaults ), true );
+		$menu_font     = json_decode( get_theme_mod( 'sydney_menu_font',     $defaults ), true );
+
+		// Guard against corrupt/legacy theme mods: sanitizer's else-branch may
+		// have stored a JSON-encoded scalar, leaving us with a string here.
+		$body_font     = is_array( $body_font )     ? $body_font     : array();
+		$headings_font = is_array( $headings_font ) ? $headings_font : array();
+		$menu_font     = is_array( $menu_font )     ? $menu_font     : array();
+
+		$body_font_name     = isset( $body_font['font'] )     ? $body_font['font']     : 'System default';
+		$headings_font_name = isset( $headings_font['font'] ) ? $headings_font['font'] : 'System default';
+		$menu_font_name     = isset( $menu_font['font'] )     ? $menu_font['font']     : 'System default';
+
+		if (
+			'System default' === $body_font_name
+			&& 'System default' === $headings_font_name
+			&& 'System default' === $menu_font_name
+		) {
+			return; // All slots default; emit no URL.
+		}
+
+		$font_families = array();
+		foreach ( array( $body_font, $menu_font, $headings_font ) as $slot ) {
+			if ( empty( $slot['font'] ) || 'System default' === $slot['font'] ) {
+				continue;
+			}
+			$tuples     = sydney_typography_loaded_weights( $slot );
+			$has_italic = false;
+			foreach ( $tuples as $tuple ) {
+				if ( $tuple['italic'] ) {
+					$has_italic = true;
+					break;
+				}
+			}
+
+			if ( $has_italic ) {
+				// Axis-tuple form: `Font:ital,wght@0,400;0,700;1,400`.
+				$pairs = array();
+				foreach ( $tuples as $tuple ) {
+					$pairs[] = ( $tuple['italic'] ? '1' : '0' ) . ',' . $tuple['weight'];
+				}
+				$font_families[] = $slot['font'] . ':ital,wght@' . implode( ';', $pairs );
+			} else {
+				// Backward-compatible roman-only form: `Font:wght@400;700`.
+				$weights = array();
+				foreach ( $tuples as $tuple ) {
+					$weights[] = $tuple['weight'];
+				}
+				$font_families[] = $slot['font'] . ':wght@' . implode( ';', $weights );
+			}
+		}
+
+		$fonts_url = add_query_arg(
+			array(
+				'family'  => implode( '&family=', $font_families ),
+				'display' => 'swap',
+			),
+			'https://fonts.googleapis.com/css2'
+		);
+
+		// Local fonts (WPTT WebFont Loader) require a direct filesystem method;
+		// anything else (ftpext, ssh2, …) falls back to the remote Google Fonts URL.
+		if ( get_theme_mod( 'perf_google_fonts_local', 0 ) ) {
+			// Memoized: get_filesystem_method() creates/stats/unlinks a temp file
+			// when FS_METHOD is undefined, and this function runs more than once
+			// per request (functions.php enqueues it twice).
+			static $fs_method = null;
+			if ( null === $fs_method ) {
+				if ( ! function_exists( 'get_filesystem_method' ) ) {
+					require_once ABSPATH . 'wp-admin/includes/file.php'; // phpcs:ignore WPThemeReview.CoreFunctionality.FileInclude.FileIncludeFound
+				}
+				$fs_method = get_filesystem_method();
+			}
+
+			if ( 'direct' === $fs_method ) {
+				require_once get_theme_file_path( 'inc/vendor/wptt-webfont-loader/wptt-webfont-loader.php' ); // phpcs:ignore WPThemeReview.CoreFunctionality.FileInclude.FileIncludeFound
+				return wptt_get_webfont_url( $fonts_url );
+			}
+		}
+
+		return esc_url_raw( $fonts_url );
+	}
+}
+
+/**
+ * Google fonts preconnect
+ */
+function sydney_preconnect_google_fonts() {
+
+	$load_locally       = get_theme_mod( 'perf_google_fonts_local', 0 );
+	$disable_preconnect = get_theme_mod( 'perf_disable_preconnect', 0 );
+	if ( $load_locally || $disable_preconnect ) {
+		return;
+	}
+
+	//Disable preconnect if popular plugins for local fonts are active
+	if ( function_exists( 'omgf_init') || class_exists( 'EverPress\LGF' ) ) {
+		return;
+	}
+
+	$defaults = wp_json_encode(
+		array(
+			'font'          => 'System default',
+			'regularweight' => 'regular',
+			'category'      => 'sans-serif',
+		)
+	);  
+
+	$body_font      = get_theme_mod( 'sydney_body_font', $defaults );
+	$headings_font  = get_theme_mod( 'sydney_headings_font', $defaults );
+
+	$body_font      = json_decode( $body_font, true );
+	$headings_font  = json_decode( $headings_font, true );
+
+	// A stored value that is not the font object decodes to null or a string, and every read below indexes it. Fall back to the defaults, which read as System default and skip the rule.
+	$body_font      = is_array( $body_font )     ? $body_font     : json_decode( $defaults, true );
+	$headings_font  = is_array( $headings_font ) ? $headings_font : json_decode( $defaults, true );
+
+	if ( 'System default' === $body_font['font'] && 'System default' === $headings_font['font'] ) {
+		return;
+	}
+
+	echo '<link rel="preconnect" href="//fonts.googleapis.com">';
+	echo '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>';
+}
+add_action( 'wp_head', 'sydney_preconnect_google_fonts' );
+
+/**
+ * Google fonts preconnect
+ */
+function sydney_404_page_content() {
+	?>
+	<section class="error-404 not-found">
+		<header class="page-header">
+			<h1 class="page-title"><?php esc_html_e( 'Oops! That page can&rsquo;t be found.', 'sydney' ); ?></h1>
+		</header><!-- .page-header -->
+
+		<div class="page-content">
+			<p><?php esc_html_e( 'It looks like nothing was found at this location. Maybe try one of the links below or a search?', 'sydney' ); ?></p>
+
+			<?php get_search_form(); ?>
+
+		</div><!-- .page-content -->
+	</section><!-- .error-404 -->
+	<?php
+}
+add_action( 'sydney_404_content', 'sydney_404_page_content' );
+
+/**
+ * Container layouts
+ */
+function sydney_single_container_layout() {
+
+	if ( !is_singular() ) {
+		return;
+	}
+
+	$post_type = get_post_type();
+
+	$layout = get_theme_mod( $post_type . '_container_layout', 'normal' );
+
+	//Add container type class
+	add_filter( 'sydney_content_area_class', function( $class ) use ( $layout ) { // phpcs:ignore Universal.NamingConventions.NoReservedKeywordParameterNames.classFound
+		$class .= ' container-' . $layout;
+
+		return $class;
+	} );
+
+	if ( 'stretched' === $layout ) {
+		add_filter( 'sydney_main_container', function() {
+			$class = ' container-fluid';
+
+			return $class;
+		} );
+	}
+
+	//Handle the sidebar
+	$enable_sidebar = get_theme_mod( 'sidebar_single_' . $post_type, 1 );
+	if ( !$enable_sidebar || 'narrow' === $layout ) {
+		add_filter( 'sydney_show_sidebar', '__return_false' );
+	}
+}
+add_action( 'wp', 'sydney_single_container_layout' );
+
+/**
+ * Archive template
+ */
+function sydney_archive_template() {
+	$layout         = sydney_blog_layout();
+	$sidebar_pos    = sydney_sidebar_position();
+	$archive_title_layout   = get_theme_mod( 'archive_title_layout', 'layout1' );   
+	$post_type              = get_post_type();
+	?>
+	<div id="primary" class="content-area archive-wrapper <?php echo esc_attr( $sidebar_pos ); ?> <?php echo esc_attr( $layout ); ?> <?php echo esc_attr( apply_filters( 'sydney_content_area_class', 'col-md-9' ) ); ?>">
+		<main id="main" class="post-wrap" role="main">
+
+		<?php if ( have_posts() ) : ?>
+
+			<?php if ( !is_home() && apply_filters( 'sydney_display_archive_title', true ) ) : ?>
+				<?php if ( ( !is_category() && !is_tag() && !is_author() ) || ( 'post' === $post_type && 'layout1' === $archive_title_layout ) ) : ?>
+				<header class="page-header archive-header">
+					<?php
+						do_action( 'sydney_before_title' );
+						the_archive_title( '<h1 class="archive-title">', '</h1>' );
+						the_archive_description( '<div class="taxonomy-description">', '</div>' );
+					?>
+				</header><!-- .page-header -->
+				<?php endif; ?>
+			<?php endif; ?>
+
+			<div class="posts-layout">
+				<div class="row" <?php sydney_masonry_data(); ?> <?php echo esc_attr( apply_filters( 'sydney_posts_layout_row', '' ) ); ?>>
+					<?php while ( have_posts() ) : the_post(); ?>
+
+						<?php get_template_part( 'content', get_post_format() ); ?>
+
+					<?php endwhile; ?>
+				</div>
+			</div>
+			
+			<?php sydney_posts_navigation(); ?>	
+
+		<?php else : ?>
+
+			<?php get_template_part( 'content', 'none' ); ?>
+
+		<?php endif; ?>
+
+		</main><!-- #main -->
+	</div><!-- #primary -->
+	<?php
+}
+add_action( 'sydney_archive_content', 'sydney_archive_template' );
+
+/**
+ * Single template
+ */
+function sydney_single_template() {
+	$sidebar_pos    = sydney_sidebar_position();
+
+	if (get_theme_mod('fullwidth_single')) {
+		$width = 'fullwidth';
+	} else {
+		$width = 'col-md-9';
+	}
+	
+	?>
+	<div id="primary" class="content-area <?php echo esc_attr( $sidebar_pos ); ?> <?php echo esc_attr( apply_filters( 'sydney_content_area_class', $width ) ); ?>">
+
+		<?php sydney_yoast_seo_breadcrumbs(); ?>
+
+		<main id="main" class="post-wrap" role="main">
+
+		<?php while ( have_posts() ) : the_post(); ?>
+
+			<?php get_template_part( 'content', 'single' ); ?>
+
+			<?php
+				// If comments are open or we have at least one comment, load up the comment template
+				if ( comments_open() || get_comments_number() ) :
+					comments_template();
+				endif;
+			?>
+
+		<?php endwhile; // end of the loop. ?>
+
+		</main><!-- #main -->
+	</div><!-- #primary -->
+	
+	<?php
+}
+add_action( 'sydney_single_content', 'sydney_single_template' );
+
+/**
+ * Global color palette
+ */
+function sydney_get_global_color_defaults() {
+	$defaults = array(
+		'global_color_1' => '#d65050',
+		'global_color_2' => '#b73d3d',
+		'global_color_3' => '#233452',
+		'global_color_4' => '#00102E',
+		'global_color_5' => '#6d7685',
+		'global_color_6' => '#00102E',
+		'global_color_7' => '#F4F5F7',
+		'global_color_8' => '#dbdbdb',
+		'global_color_9' => '#ffffff',
+	);
+
+	return apply_filters( 'sydney_global_color_defaults', $defaults );
+}
+
+/**
+ * Get global colors
+ */
+if ( ! function_exists( 'sydney_get_global_colors' ) ) {
+	function sydney_get_global_colors() {
+		$defaults = sydney_get_global_color_defaults();
+
+		$colors = array();
+
+		foreach ( $defaults as $key => $value ) {
+			$colors[ $key ] = get_theme_mod( $key, $value );
+		}
+
+		return $colors;
+	}
+}
+
+/**
+ * Get the extra global colors (currently only set by the AM Starter Sites plugin).
+ *
+ * Returns an associative array keyed by the slot number (1, 2) with hex string values.
+ * Only slots that have a non-empty value are returned.
+ *
+ * Maximum 2 slots, intended for 1-2 brand accents per starter site — not a second palette.
+ *
+ * @return array<int,string> e.g. array( 1 => '#C97D5D' )
+ */
+if ( ! function_exists( 'sydney_get_extra_global_colors' ) ) {
+	function sydney_get_extra_global_colors() {
+		$colors = array();
+		for ( $i = 1; $i <= 2; $i++ ) {
+			$value = get_theme_mod( 'extra_global_color_' . $i, '' );
+			if ( ! empty( $value ) ) {
+				$colors[ $i ] = $value;
+			}
+		}
+		return $colors;
+	}
+}
+
+/**
+ * Footer area
+ */
+function sydney_footer_area() {
+	?>
+	<?php if ( is_active_sidebar( 'footer-1' ) ) : ?>
+		<?php get_sidebar('footer'); ?>
+	<?php endif; ?>
+
+	<?php $container    = get_theme_mod( 'footer_credits_container', 'container' ); ?>
+	<?php $credits      = sydney_footer_credits(); ?>
+
+	<footer id="colophon" class="site-footer">
+		<div class="<?php echo esc_attr( $container ); ?>">
+			<div class="site-info">
+				<div class="row">
+					<div class="col-md-6">
+						<?php echo wp_kses_post( $credits ); ?>
+					</div>
+					<div class="col-md-6">
+						<?php sydney_social_profile( 'social_profiles_footer' ); ?>
+					</div>					
+				</div>
+			</div>
+		</div><!-- .site-info -->
+	</footer><!-- #colophon -->
+
+	<?php
+}
+add_action( 'sydney_footer', 'sydney_footer_area' );
+
+/**
+ * Page template
+ */
+function sydney_single_page_template() {
+	$sidebar_pos = sydney_sidebar_position();
+
+	//Get classes for main content area
+	if ( apply_filters( 'sydney_disable_cart_checkout_sidebar', true ) && class_exists( 'WooCommerce' ) && ( is_checkout() || is_cart() ) ) {
+		$width = 'col-md-12';
+	} else {
+		$width = 'col-md-9';
+	}
+	?>
+	
+		<div id="primary" class="content-area <?php echo esc_attr( $sidebar_pos ); ?> <?php echo esc_attr( apply_filters( 'sydney_content_area_class', $width ) ); ?>">
+			<main id="main" class="post-wrap" role="main">
+	
+				<?php while ( have_posts() ) : the_post(); ?>
+	
+					<?php get_template_part( 'content', 'page' ); ?>
+	
+					<?php
+						// If comments are open or we have at least one comment, load up the comment template
+						if ( comments_open() || get_comments_number() ) :
+							comments_template();
+						endif;
+					?>
+	
+				<?php endwhile; // end of the loop. ?>
+	
+			</main><!-- #main -->
+		</div><!-- #primary -->
+	<?php
+}
+add_action( 'sydney_page_content', 'sydney_single_page_template' );
+
+/**
+ * Search template
+ */
+function sydney_search_template() {
+	
+	$layout         = sydney_blog_layout();
+	$sidebar_pos    = sydney_sidebar_position();
+	$archive_title_layout = get_theme_mod( 'archive_title_layout', 'layout1' );
+	?>
+
+	<div id="primary" class="content-area <?php echo esc_attr( $sidebar_pos ); ?> <?php echo esc_attr( $layout ); ?> <?php echo esc_attr( apply_filters( 'sydney_content_area_class', 'col-md-9' ) ); ?>">
+		<main id="main" class="post-wrap" role="main">
+
+		<?php if ( have_posts() ) : ?>
+
+			<header class="page-header">
+				<?php // translators: %s is the search query ?>
+				<h3><?php printf( esc_html__( 'Search Results for: %s', 'sydney' ), '<span>' . get_search_query() . '</span>' ); ?></h3>
+			</header><!-- .page-header -->
+
+			<div class="posts-layout">
+				<div class="row" <?php sydney_masonry_data(); ?> <?php echo esc_attr( apply_filters( 'sydney_posts_layout_row', '' ) ); ?>>
+					<?php while ( have_posts() ) : the_post(); ?>
+
+						<?php get_template_part( 'content', get_post_format() ); ?>
+
+					<?php endwhile; ?>
+				</div>
+			</div>
+
+			<?php sydney_posts_navigation(); ?>	
+
+		<?php else : ?>
+
+			<?php get_template_part( 'content', 'none' ); ?>
+
+		<?php endif; ?>
+
+		</main><!-- #main -->
+	</div><!-- #primary -->
+	<?php
+}
+add_action( 'sydney_search_content', 'sydney_search_template' );
+
+/**
+ * Get Header Search Icon
+ */
+if ( ! function_exists( 'sydney_get_header_search_icon' ) ) {
+	function sydney_get_header_search_icon( $do_echo = false ) {
+		$icon = get_theme_mod( 'search_icon', 'icon-search' );
+
+		$output = '';
+		if( $icon !== 'icon-custom' ) {
+			$output .= '<i class="sydney-svg-icon icon-search active">' . sydney_get_svg_icon( $icon ) . '</i>';
+		} else {
+			$image_id = get_theme_mod( 'search_icon_custom_image', 0 );
+
+			/**
+			 * Hook 'sydney_header_icons_image_size'
+			 *
+			 * @since 1.0.0
+			 */
+			$output .= '<i class="sydney-svg-icon icon-search active">' . wp_get_attachment_image( $image_id, apply_filters( 'sydney_header_icons_image_size', 'sydney-header-icons' ) ) . '</i>';
+		}
+
+		$output .= '<i class="sydney-svg-icon icon-cancel">' . sydney_get_svg_icon( 'icon-cancel' ) . '</i>';
+
+		if ( $do_echo !== false ) {
+			echo $output; //phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		} else {
+			return $output;
+		}
+	}
+}
+
+/**
+ * Add sydney class to nav menu ul sub-menu.
+ *
+ * @param array $classes Classes for the ul element.
+ * @param stdClass $args An object of wp_nav_menu() arguments.
+ * @param int $depth Depth of menu item. Used for padding.
+ * @return array $classes Updated classes for the ul element. 
+ */
+function sydney_nav_menu_submenu_css_class( $classes, $args, $depth ) {
+	$classes[] = 'sydney-dropdown-ul';
+	return $classes;
+}
+add_filter( 'nav_menu_submenu_css_class', 'sydney_nav_menu_submenu_css_class', 10, 3 );
+
+/**
+ * Add sydney class to nav menu li.
+ * 
+ * @param array $classes Classes for the li element.
+ * @param WP_Post $menu_item Menu item data object.
+ * @param stdClass $args An object of wp_nav_menu() arguments.
+ * @param int $depth Depth of menu item. Used for padding.
+ * @return array $classes Updated classes for the li element.
+ */
+function sydney_nav_menu_css_class( $classes, $menu_item, $args, $depth ) {
+	$classes[] = 'sydney-dropdown-li';
+	return $classes;
+}
+add_filter( 'nav_menu_css_class', 'sydney_nav_menu_css_class', 10, 4 );
+
+/**
+ * Add sydney class to nav menu anchor.
+ * 
+ * @param array $atts Array with attributes.
+ * @param WP_Post $menu_item Menu item data object.
+ * @param stdClass $args An object of wp_nav_menu() arguments.
+ * @param int $depth Depth of menu item. Used for padding.
+ * @return array $atts Updated attributes for the li element.
+ */
+function sydney_nav_menu_link_attributes( $atts, $menu_item, $args, $depth ) {
+    if ( isset( $atts['class'] ) ) {
+        $atts['class'] .= ' sydney-dropdown-link';
+    } else {
+        $atts['class'] = 'sydney-dropdown-link';
+    }
+    return $atts;
+}
+add_filter( 'nav_menu_link_attributes', 'sydney_nav_menu_link_attributes', 10, 4 );
+
+/**
+ * Remove core's Appearance > Fonts, Design, Header and Background menu items.
+ *
+ * Neither Fonts nor Design controls Sydney: its fonts come from the Customizer,
+ * and Design only opens the site editor's Patterns and Style Book screens.
+ * Header and Background only open their own control in the Customizer. Every
+ * page stays reachable by URL, which the Block Templates module links to.
+ *
+ * Priority 20: core hooks the legacy Header and Background screens to
+ * admin_menu after the theme's callbacks.
+ */
+function sydney_remove_core_appearance_menu_items() {
+	global $submenu;
+
+	remove_submenu_page( 'themes.php', 'font-library.php' );
+	remove_submenu_page( 'themes.php', 'site-editor.php' );
+	remove_submenu_page( 'themes.php', 'custom-header' );
+	remove_submenu_page( 'themes.php', 'custom-background' );
+
+	// The Customizer shortcuts carry a per-request return URL, so match the control they open.
+	foreach ( $submenu['themes.php'] as $key => $item ) {
+		if ( preg_match( '/autofocus%5Bcontrol%5D=(header|background)_image/', $item[2] ) ) {
+			unset( $submenu['themes.php'][ $key ] );
+		}
+	}
+}
+add_action( 'admin_menu', 'sydney_remove_core_appearance_menu_items', 20 );
